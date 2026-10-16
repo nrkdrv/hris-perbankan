@@ -1,0 +1,1 @@
+{"extends":"./tsconfig.json","compilerOptions":{"outDir":"./dist","rootDir":"./src","paths":{"@hris/shared":["../../packages/shared/dist/index.d.ts"]}},"exclude":["node_modules","dist","test","**/*.spec.ts","prisma/seed.ts","prisma/postgis-setup.ts"]}
