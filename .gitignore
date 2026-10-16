@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+out/
+*.log
+.env
+.env.local
+apps/api/.env
+apps/web/.env.local
+apps/api/storage/
+apps/api/prisma/migrations/**/migration.sql.lock
+coverage/
+*.tsbuildinfo
+.DS_Store
+.pg/

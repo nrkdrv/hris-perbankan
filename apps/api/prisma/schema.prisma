@@ -1,0 +1,543 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS — dicerminkan di packages/shared/src/types.ts
+// ============================================================
+
+enum Role {
+  SUPER_ADMIN
+  BRANCH_MANAGER
+  OFFICE_EMPLOYEE
+  FIELD_EMPLOYEE
+  AUDITOR
+}
+
+enum WorkLocationType {
+  OFFICE_BOUND
+  FIELD_MOBILE
+}
+
+enum AttendanceStatus {
+  ON_TIME
+  LATE
+  ALPHA
+  ON_LEAVE
+  HOLIDAY
+}
+
+enum LocationStatus {
+  IN_OFFICE
+  OUTSIDE_FIELD
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  PERMIT
+  MATERNITY
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum KanbanStage {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum LetterCategory {
+  SK_DIR
+  ST
+  SP
+  MEMO
+  EXT
+}
+
+enum ArchiveStatus {
+  RESERVED_PENDING_SCAN
+  PENDING_VERIFICATION
+  ARCHIVED_VERIFIED
+  OVERDUE_SCAN
+}
+
+enum AssetCondition {
+  GOOD_ACTIVE
+  UNDER_REPAIR
+  DAMAGED_WRITTEN_OFF
+}
+
+enum VisitPurpose {
+  SURVEY_AGUNAN
+  PROSPEK_FUNDING
+  PENAGIHAN
+  LAINNYA
+}
+
+enum PingTrigger {
+  ADMIN_ON_DEMAND
+  PERIODIC_SYNC
+}
+
+enum HolidayType {
+  NATIONAL_HOLIDAY
+  JOINT_LEAVE
+}
+
+enum PayrollPeriodStatus {
+  DRAFT
+  PUBLISHED
+}
+
+// ============================================================
+// MASTER & AKSES
+// ============================================================
+
+model Branch {
+  id               String   @id @default(uuid()) @db.Uuid
+  branchCode       String   @unique @db.VarChar(16)
+  name             String   @db.VarChar(128)
+  address          String?  @db.Text
+  latitude         Decimal  @db.Decimal(10, 7)
+  longitude        Decimal  @db.Decimal(10, 7)
+  geofenceRadiusM  Int      @default(75)
+  allowedPublicIps String[] @default([])
+  minTellerQuota   Int      @default(2)
+  minCsQuota       Int      @default(1)
+  workStartTime    String   @default("08:00") @db.VarChar(5)
+  workEndTime      String   @default("17:00") @db.VarChar(5)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  users            User[]
+  attendanceLogs   AttendanceLog[]
+  kanbanProjects   KanbanProject[]
+  inventoryAssets  InventoryAsset[]
+  calendarEvents   CalendarEvent[]
+}
+
+model User {
+  id               String           @id @default(uuid()) @db.Uuid
+  nip              String           @unique @db.VarChar(24)
+  fullName         String           @db.VarChar(128)
+  email            String           @unique @db.VarChar(128)
+  passwordHash     String           @db.VarChar(255)
+  role             Role             @default(OFFICE_EMPLOYEE)
+  jobTitle         String?          @db.VarChar(64)
+  branchId         String           @db.Uuid
+  workLocationType WorkLocationType @default(OFFICE_BOUND)
+  birthDate        DateTime?        @db.Date
+  phone            String?          @db.VarChar(24)
+  ptkpStatus       String           @default("TK/0") @db.VarChar(8)
+  fcmToken         String?          @db.VarChar(255)
+  deviceIdBound    String?          @db.VarChar(128)
+  isActive         Boolean          @default(true)
+  lastLoginAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  branch           Branch           @relation(fields: [branchId], references: [id])
+
+  attendanceLogs   AttendanceLog[]
+  fieldCheckpoints FieldCheckpoint[]
+  livePings        LiveLocationPing[] @relation("PingSubject")
+  pingRequests     LiveLocationPing[] @relation("PingRequester")
+  leaveRequests    LeaveRequest[]     @relation("LeaveOwner")
+  decidedLeaves    LeaveRequest[]     @relation("LeaveDecider")
+  refreshTokens    RefreshToken[]
+  assignedTasks    KanbanTask[]       @relation("TaskAssignee")
+  reviewedTasks    KanbanTask[]       @relation("TaskReviewer")
+  verifiedTasks    KanbanTask[]       @relation("TaskVerifier")
+  taskComments     KanbanComment[]
+  requestedLetters OfficialLetter[]
+  ownedAssets      InventoryAsset[]   @relation("AssetPic")
+  handoversTo      AssetHandover[]    @relation("HandoverTo")
+  handoversFrom    AssetHandover[]    @relation("HandoverFrom")
+  payslips         Payslip[]
+  auditTrails      AuditTrail[]
+  fraudLogs        SecurityFraudLog[]
+  calendarEvents   CalendarEvent[]
+
+  @@index([branchId, role])
+}
+
+// ============================================================
+// MODUL 1 — ABSENSI & FIELD
+// ============================================================
+
+model AttendanceLog {
+  id               String           @id @default(uuid()) @db.Uuid
+  userId           String           @db.Uuid
+  branchId         String           @db.Uuid
+  attendanceDate   DateTime         @db.Date
+  clockInAt        DateTime?
+  clockInLat       Decimal?         @db.Decimal(10, 7)
+  clockInLon       Decimal?         @db.Decimal(10, 7)
+  clockInAccuracyM Decimal?         @db.Decimal(8, 2)
+  distanceInM      Decimal?         @db.Decimal(10, 2)
+  clockInPhotoUrl  String?          @db.VarChar(512)
+  clockInHash      String?          @db.VarChar(16)
+  clockOutAt       DateTime?
+  clockOutLat      Decimal?         @db.Decimal(10, 7)
+  clockOutLon      Decimal?         @db.Decimal(10, 7)
+  clockOutPhotoUrl String?          @db.VarChar(512)
+  lateMinutes      Int              @default(0)
+  isMockDetected   Boolean          @default(false)
+  locationStatus   LocationStatus?
+  status           AttendanceStatus @default(ON_TIME)
+  notes            String?          @db.Text
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id])
+  branch           Branch           @relation(fields: [branchId], references: [id])
+  checkpoints      FieldCheckpoint[]
+
+  @@unique([userId, attendanceDate])
+  @@index([branchId, attendanceDate])
+}
+
+model FieldCheckpoint {
+  id                 String       @id @default(uuid()) @db.Uuid
+  userId             String       @db.Uuid
+  attendanceId       String?      @db.Uuid
+  checkinAt          DateTime     @default(now())
+  latitude           Decimal      @db.Decimal(10, 7)
+  longitude          Decimal      @db.Decimal(10, 7)
+  accuracyM          Decimal?     @db.Decimal(8, 2)
+  reverseAddress     String?      @db.Text
+  visitPurpose       VisitPurpose
+  clientName         String?      @db.VarChar(128)
+  visitNotes         String?      @db.Text
+  watermarkedPhotoUrl String?     @db.VarChar(512)
+  photoHash          String?      @db.VarChar(16)
+
+  user               User          @relation(fields: [userId], references: [id])
+  attendance         AttendanceLog? @relation(fields: [attendanceId], references: [id])
+
+  @@index([userId, checkinAt])
+}
+
+model LiveLocationPing {
+  id          BigInt      @id @default(autoincrement())
+  userId      String      @db.Uuid
+  triggerType PingTrigger
+  requestedBy String?     @db.Uuid
+  latitude    Decimal     @db.Decimal(10, 7)
+  longitude   Decimal     @db.Decimal(10, 7)
+  accuracyM   Decimal?    @db.Decimal(8, 2)
+  batteryPct  Int?
+  recordedAt  DateTime    @default(now())
+
+  user        User        @relation("PingSubject", fields: [userId], references: [id])
+  requester   User?       @relation("PingRequester", fields: [requestedBy], references: [id])
+
+  @@index([userId, recordedAt])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @db.VarChar(128)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ============================================================
+// MODUL 2 — KALENDER & CUTI
+// ============================================================
+
+model CompanyHoliday {
+  id          String      @id @default(uuid()) @db.Uuid
+  holidayDate DateTime    @unique @db.Date
+  name        String      @db.VarChar(128)
+  type        HolidayType
+  year        Int
+
+  @@index([year])
+}
+
+model LeaveRequest {
+  id               String         @id @default(uuid()) @db.Uuid
+  userId           String         @db.Uuid
+  leaveType        LeaveType
+  startDate        DateTime       @db.Date
+  endDate          DateTime       @db.Date
+  workingDaysCount Int
+  reason           String?        @db.Text
+  attachmentUrl    String?        @db.VarChar(512)
+  approvalStatus   ApprovalStatus @default(PENDING)
+  approvedBy       String?        @db.Uuid
+  approvedAt       DateTime?
+  approverNotes    String?        @db.Text
+  quotaWarning     String?        @db.Text
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user             User           @relation("LeaveOwner", fields: [userId], references: [id])
+  approver         User?          @relation("LeaveDecider", fields: [approvedBy], references: [id])
+
+  @@index([userId, startDate])
+  @@index([approvalStatus])
+}
+
+model CalendarEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  branchId    String?   @db.Uuid
+  title       String    @db.VarChar(160)
+  description String?   @db.Text
+  startAt     DateTime
+  endAt       DateTime?
+  isManagement Boolean  @default(true)
+  createdBy   String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+
+  branch      Branch?   @relation(fields: [branchId], references: [id])
+  creator     User?     @relation(fields: [createdBy], references: [id])
+
+  @@index([branchId, startAt])
+}
+
+// ============================================================
+// MODUL 3 — KANBAN
+// ============================================================
+
+model KanbanProject {
+  id          String   @id @default(uuid()) @db.Uuid
+  branchId    String?  @db.Uuid
+  name        String   @db.VarChar(128)
+  description String?  @db.Text
+  ownerId     String?  @db.Uuid
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branch      Branch?  @relation(fields: [branchId], references: [id])
+  tasks       KanbanTask[]
+}
+
+model KanbanTask {
+  id             String       @id @default(uuid()) @db.Uuid
+  projectId      String       @db.Uuid
+  title          String       @db.VarChar(200)
+  description    String?      @db.Text
+  assigneeId     String?      @db.Uuid
+  reviewerId     String?      @db.Uuid
+  priority       TaskPriority @default(MEDIUM)
+  stage          KanbanStage  @default(TODO)
+  dueAt          DateTime?
+  startedAt      DateTime?
+  attachmentUrls String[]     @default([])
+  h1Notified     Boolean      @default(false)
+  verifiedBy     String?      @db.Uuid
+  revisionNotes  String?      @db.Text
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  project        KanbanProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee       User?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  reviewer       User?         @relation("TaskReviewer", fields: [reviewerId], references: [id])
+  verifier       User?         @relation("TaskVerifier", fields: [verifiedBy], references: [id])
+  comments       KanbanComment[]
+
+  @@index([projectId, stage])
+  @@index([assigneeId, stage])
+}
+
+model KanbanComment {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  authorId  String   @db.Uuid
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  task      KanbanTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User       @relation(fields: [authorId], references: [id])
+
+  @@index([taskId, createdAt])
+}
+
+// ============================================================
+// MODUL 4 — NOMOR SURAT (E-OFFICE)
+// ============================================================
+
+model LetterSequence {
+  id           String @id @default(uuid()) @db.Uuid
+  entityCode   String @db.VarChar(16)
+  categoryCode String @db.VarChar(16)
+  year         Int
+  lastNumber   Int    @default(0)
+
+  @@unique([entityCode, categoryCode, year])
+}
+
+model OfficialLetter {
+  id            String        @id @default(uuid()) @db.Uuid
+  letterNumber  String        @unique @db.VarChar(64)
+  categoryCode  LetterCategory
+  entityCode    String        @db.VarChar(16)
+  subject       String        @db.VarChar(255)
+  recipient     String?       @db.VarChar(255)
+  requestedBy   String        @db.Uuid
+  releaseDate   DateTime?     @db.Date
+  signedPdfUrl  String?       @db.VarChar(512)
+  pdfSha256     String?       @db.VarChar(64)
+  archiveStatus ArchiveStatus @default(RESERVED_PENDING_SCAN)
+  scanDueAt     DateTime?     @db.Date
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  requester     User          @relation(fields: [requestedBy], references: [id])
+
+  @@index([entityCode, archiveStatus])
+}
+
+// ============================================================
+// MODUL 5 — INVENTARIS ASET
+// ============================================================
+
+model InventoryAsset {
+  id                String         @id @default(uuid()) @db.Uuid
+  assetCode         String         @unique @db.VarChar(64)
+  name              String         @db.VarChar(160)
+  categoryCode      String         @db.VarChar(16)
+  branchId          String         @db.Uuid
+  serialNumber      String?        @db.VarChar(64)
+  specifications    String?        @db.Text
+  acquisitionDate   DateTime?      @db.Date
+  acquisitionCost   Decimal?       @db.Decimal(15, 2)
+  usefulLifeMonths  Int?
+  conditionStatus   AssetCondition @default(GOOD_ACTIVE)
+  currentPicUserId  String?        @db.Uuid
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  branch            Branch         @relation(fields: [branchId], references: [id])
+  currentPic        User?          @relation("AssetPic", fields: [currentPicUserId], references: [id])
+  handovers         AssetHandover[]
+
+  @@index([branchId, conditionStatus])
+}
+
+model AssetHandover {
+  id          String    @id @default(uuid()) @db.Uuid
+  assetId     String    @db.Uuid
+  fromUserId  String?   @db.Uuid
+  toUserId    String    @db.Uuid
+  handoverDate DateTime @default(now()) @db.Date
+  bastPdfUrl  String?   @db.VarChar(512)
+  notes       String?   @db.Text
+  receivedAt  DateTime?
+
+  asset       InventoryAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  fromUser    User?          @relation("HandoverFrom", fields: [fromUserId], references: [id])
+  toUser      User           @relation("HandoverTo", fields: [toUserId], references: [id])
+
+  @@index([assetId, handoverDate])
+}
+
+// ============================================================
+// MODUL 6 — PAYROLL / E-PAYSLIP
+// ============================================================
+
+model PayrollPeriod {
+  id          String              @id @default(uuid()) @db.Uuid
+  periodMonth String              @unique @db.Char(7) // '2026-10'
+  status      PayrollPeriodStatus @default(DRAFT)
+  publishedAt DateTime?
+  publishedBy String?             @db.Uuid
+  createdAt   DateTime            @default(now())
+
+  payslips    Payslip[]
+}
+
+model Payslip {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  periodMonth      String   @db.Char(7)
+  earningsJson     Json
+  deductionsJson   Json
+  grossPay         Decimal  @db.Decimal(15, 2)
+  pph21Amount      Decimal  @db.Decimal(15, 2)
+  netTakeHomePay   Decimal  @db.Decimal(15, 2)
+  encryptedPdfUrl  String?  @db.VarChar(512)
+  isPublished      Boolean  @default(false)
+  publishedAt      DateTime?
+  createdAt        DateTime @default(now())
+
+  user             User     @relation(fields: [userId], references: [id])
+  period           PayrollPeriod @relation(fields: [periodMonth], references: [periodMonth])
+
+  @@unique([userId, periodMonth])
+  @@index([periodMonth, isPublished])
+}
+
+// ============================================================
+// PENGATURAN SISTEM (key-value)
+// ============================================================
+
+model SystemSetting {
+  key       String   @id @db.VarChar(64)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// AUDIT & KEAMANAN
+// ============================================================
+
+model AuditTrail {
+  id        BigInt   @id @default(autoincrement())
+  actorId   String?  @db.Uuid
+  action    String   @db.VarChar(64)
+  entityType String  @db.VarChar(64)
+  entityId  String   @db.VarChar(64)
+  oldValues Json?
+  newValues Json?
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.VarChar(512)
+  createdAt DateTime @default(now())
+
+  actor     User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+}
+
+model SecurityFraudLog {
+  id           BigInt   @id @default(autoincrement())
+  userId       String?  @db.Uuid
+  incidentType String   @db.VarChar(64)
+  details      Json?
+  ipAddress    String?  @db.VarChar(45)
+  createdAt    DateTime @default(now())
+
+  user         User?    @relation(fields: [userId], references: [id])
+
+  @@index([incidentType, createdAt])
+}
